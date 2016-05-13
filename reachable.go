@@ -1,33 +1,80 @@
-// Package reachable adds utility methods to be notifies if a network connection
-// goes up or is down.
+// Package reachable adds utility methods to notify when a network connection
+// to a remote host is up or down. This is intended for long-running programs
+// on systems that might have intermittent network access (e.g. laptops, phones,
+// remote embedded systems, etc).
+//
+//    // check if google.com is reachable every 5 minutes
+//    reachable.DefaultInterval = time.Minute*5
+//    reachable.Start("google.com")
+//    defer reachable.Stop()
+//
+//    ...
+//
+//    // about to do network stuff...
+//    if !reachable.NetworkIsReachable {
+//      log.Println("no network available!")
+//    }
+//
+// This package may also be used to monitor multiple hosts by setting up
+// separate Checker instances:
+//
+//    // these will be updated whenever you need them
+//    googleIsUp := true
+//    bingIsUp := true
+//
+//    c1 := Checker{
+//        Hostport:"google.com:443",
+//        Notifier: func(r bool) {
+//           googleIsUp = r
+//        },
+//    }
+//    c2 := Checker{
+//        Hostport:"bing.com",
+//        Notifier: func(r bool) {
+//           bingIsUp = r
+//        },
+//    }
+//
+//    // start goroutines that check for reachability
+//    c1.Start()
+//    c2.Start()
+//
+//    ...
+//
 package reachable
 
 import (
 	"net"
+	"strings"
 	"time"
 )
 
 var (
 	// NetworkIsReachable is set to true when the package is able to reach the
-	// configured host. Start("example.com") must be call for this to be valid.
+	// configured host. Start("example.com") must be called for this to be valid.
 	// If Start is not called, the default value ensures code continues to work.
 	NetworkIsReachable = true
 
 	// DefaultInterval is the polling interval when network checks are made.
 	DefaultInterval = time.Minute
 
+	// DefaultTimeout specifies how long the TCP connection attempt should wait
+	// before timing out. This should be adjusted for high-latency connections.
+	DefaultTimeout = time.Second * 3
+
 	singleton = &Checker{}
 )
 
-// Checker is a reachability checker that can notify calling code when network
-// access comes up or goes away.
+// Checker is a reachability checker that notifies calling code when a given
+// host and port is reachable via the network.
 type Checker struct {
-	// Hostname to contact to verify connectivity.
-	Hostname string
-	// Port to use (including ":" prefix) during TCP connection (default ":80").
-	Port string
-	// Interval to poll for network access.
+	// Hostport contains the hostname and port to contact to verify
+	// connectivity. If no port is provided, assumes default port 80.
+	Hostport string
+
+	// Interval to poll for network access. If zero or negative, uses DefaultInterval.
 	Interval time.Duration
+
 	// Notifier is the user-specified callback for reachability notifications.
 	Notifier func(bool)
 
@@ -36,11 +83,8 @@ type Checker struct {
 
 // Start begins Checker polling in a background goroutine.
 func (c *Checker) Start() {
-	if c.Port == "" {
-		c.Port = ":80"
-	}
 	c.quit = make(chan struct{})
-	go singleton.run()
+	go c.run()
 }
 
 // Stop tells the background goroutine to stop checking.
@@ -51,13 +95,7 @@ func (c *Checker) Stop() {
 // Start begins the default Checker instance with the DefaultInterval and
 // updates the global NetworkIsReachable boolean value.
 func Start(hostname string) {
-	singleton.Hostname = hostname
-	singleton.Port = ":80"
-	h, p, err := net.SplitHostPort(hostname)
-	if err == nil {
-		singleton.Hostname = h
-		singleton.Port = ":" + p
-	}
+	singleton.Hostport = hostname
 	singleton.Interval = DefaultInterval
 	singleton.Notifier = func(a bool) {
 		NetworkIsReachable = a
@@ -90,7 +128,10 @@ func (c *Checker) hasInterfaceUp() bool {
 }
 
 func (c *Checker) canConnect() bool {
-	conn, err := net.DialTimeout("tcp", c.Hostname+c.Port, time.Second*3)
+	if !strings.Contains(c.Hostport, ":") {
+		c.Hostport += ":80"
+	}
+	conn, err := net.DialTimeout("tcp", c.Hostport, DefaultTimeout)
 	if err != nil {
 		return false
 	}
@@ -100,6 +141,9 @@ func (c *Checker) canConnect() bool {
 
 func (c *Checker) run() {
 	currentStatus := -1
+	if c.Interval <= time.Duration(0) {
+		c.Interval = DefaultInterval
+	}
 	t := time.NewTicker(c.Interval)
 	for {
 		select {
