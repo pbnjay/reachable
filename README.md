@@ -18,7 +18,7 @@ remote embedded systems, etc).
     // ...
 
     // about to do network stuff...
-    if !reachable.NetworkIsReachable {
+    if !reachable.NetworkIsReachable() {
         log.Println("no network available!")
     }
 ```

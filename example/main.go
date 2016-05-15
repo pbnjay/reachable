@@ -60,7 +60,7 @@ func main() {
 	// kill the server/unplug the cord/disable wifi again to see live updates!
 	for i := 0; i < 60; i++ {
 		time.Sleep(time.Second)
-		if reachable.NetworkIsReachable {
+		if reachable.NetworkIsReachable() {
 			os.Stdout.Write([]byte("\r" + *host + "   REACHABLE  "))
 		} else {
 			os.Stdout.Write([]byte("\r" + *host + " NOT REACHABLE"))

@@ -11,7 +11,7 @@
 //    ...
 //
 //    // about to do network stuff...
-//    if !reachable.NetworkIsReachable {
+//    if !reachable.NetworkIsReachable() {
 //      log.Println("no network available!")
 //    }
 //
@@ -46,15 +46,11 @@ package reachable
 import (
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
 var (
-	// NetworkIsReachable is set to true when the package is able to reach the
-	// configured host. Start("example.com") must be called for this to be valid.
-	// If Start is not called, the default value ensures code continues to work.
-	NetworkIsReachable = true
-
 	// DefaultInterval is the polling interval when network checks are made.
 	DefaultInterval = time.Minute
 
@@ -63,6 +59,8 @@ var (
 	DefaultTimeout = time.Second * 3
 
 	singleton = &Checker{}
+	smu       = &sync.Mutex{}
+	sup       = true
 )
 
 // Checker is a reachability checker that notifies calling code when a given
@@ -93,12 +91,14 @@ func (c *Checker) Stop() {
 }
 
 // Start begins the default Checker instance with the DefaultInterval and
-// updates the global NetworkIsReachable boolean value.
+// enables updates for the NetworkIsReachable function.
 func Start(hostname string) {
 	singleton.Hostport = hostname
 	singleton.Interval = DefaultInterval
 	singleton.Notifier = func(a bool) {
-		NetworkIsReachable = a
+		smu.Lock()
+		sup = a
+		smu.Unlock()
 	}
 	singleton.Start()
 }
@@ -107,7 +107,7 @@ func Start(hostname string) {
 func Stop() {
 	singleton.Stop()
 	// keep system in a sane/useful state when not running
-	NetworkIsReachable = true
+	singleton.Notifier(true)
 }
 
 func (c *Checker) hasInterfaceUp() bool {
@@ -170,4 +170,13 @@ func (c *Checker) run() {
 			}
 		}
 	}
+}
+
+// NetworkIsReachable returns true when the package is able to reach the
+// configured host. Start("example.com") must be called for this to be valid.
+// If Start is not called, the default value is true.
+func NetworkIsReachable() bool {
+	smu.Lock()
+	defer smu.Unlock()
+	return sup
 }
